@@ -1,0 +1,24 @@
+{
+  "name": "@christiansmith/mapper-request",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Fetching and scraping for Mapper JS",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/christiansmith/mapper-request.git"
+  },
+  "author": "Christian Smith",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/christiansmith/mapper-request/issues"
+  },
+  "homepage": "https://github.com/christiansmith/mapper-request#readme",
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "fast-xml-parser": "^5.2.1"
+  }
+}

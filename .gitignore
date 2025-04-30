@@ -1,0 +1,9 @@
+# Node.js
+node_modules/
+
+# Deno
+.deno/
+deno.lock
+
+# Misc
+.DS_Store

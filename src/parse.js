@@ -3,7 +3,7 @@
  */
 import JSONPointer from './JSONPointer.js'
 import { XMLParser } from 'fast-xml-parser'
-import cheerio from 'cheerio'
+import * as cheerio from 'cheerio'
 import contentType from './contentType.js'
 import { extractHTML, extractLinkedData, extractMetaTags } from './extract.js'
 

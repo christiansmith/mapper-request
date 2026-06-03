@@ -2,5 +2,8 @@
   "name": "@christiansmith/mapper-request",
   "version": "0.1.1",
   "license": "MIT",
-  "exports": "./src/index.js"
+  "exports": "./src/index.js",
+  "publish": {
+    "exclude": ["package-lock.json"]
+  }
 }

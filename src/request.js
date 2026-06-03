@@ -31,7 +31,7 @@ async function getSearchParams(options, descriptor, context) {
   const mapping = search?.mapping
 
   const entries = mapping
-    ? Object.entries(await map(search, context)) //
+    ? Object.entries(await map(search, { ...context, target: {} })) //
     : Object.entries(search || {})
 
   for (let [key, value] of entries) {

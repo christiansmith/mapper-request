@@ -1,4 +1,3 @@
-//import { replace as rep } from 'https://deno.land/x/fun@v2.0.0/string.ts'
 export function extractHTML($, scraper, node) {
   const result = {}
 
@@ -51,21 +50,24 @@ export function extractHTML($, scraper, node) {
       value = value.split(split)
     }
 
-    // replace
-    //if (value && replace) {
-    //  if (Array.isArray(value)) {
-    //    value = value.map((item) => {
-    //      let tmp = item
-    //      replace.forEach(([pattern, replacement]) => {
-    //        tmp = rep(new RegExp(pattern, 'g'), replacement)(tmp)
-    //      })
-    //    })
-    //  } else {
-    //    replace.forEach(([pattern, replacement]) => {
-    //      return (value = rep(new RegExp(pattern, 'g'), replacement)(value))
-    //    })
-    //  }
-    //}
+    // replace — apply an ordered list of [pattern, replacement] pairs as global
+    // regular-expression substitutions, to a string or to each string in an
+    // array. e.g. replace: [['\\s*\\|.*$', '']] strips a trailing " | Site"
+    // suffix. (Previously a no-op: it depended on an external import and its
+    // array branch never returned the mapped value.)
+    if (value && replace) {
+      const applyReplace = (string) =>
+        replace.reduce(
+          (acc, [pattern, replacement]) => acc.replace(new RegExp(pattern, 'g'), replacement),
+          string
+        )
+
+      if (Array.isArray(value)) {
+        value = value.map((item) => (typeof item === 'string' ? applyReplace(item) : item))
+      } else if (typeof value === 'string') {
+        value = applyReplace(value)
+      }
+    }
 
     // trim array
     if (value && trim && Array.isArray(value)) {

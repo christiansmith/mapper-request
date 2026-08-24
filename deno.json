@@ -3,6 +3,9 @@
   "version": "0.1.3",
   "license": "MIT",
   "exports": "./src/index.js",
+  "tasks": {
+    "test": "deno test --allow-read --allow-env --allow-net=127.0.0.1 test/"
+  },
   "publish": {
     "exclude": ["package-lock.json", "test"]
   }

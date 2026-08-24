@@ -18,7 +18,7 @@
   },
   "homepage": "https://github.com/christiansmith/mapper-request#readme",
   "dependencies": {
-    "@christiansmith/mapper-js": "^0.1.1",
+    "@christiansmith/mapper-js": "^0.3.1",
     "cheerio": "^1.0.0-rc.12",
     "fast-xml-parser": "^5.2.1"
   }

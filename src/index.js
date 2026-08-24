@@ -1,11 +1,12 @@
 import contentType from './contentType.js'
 import parse from './parse.js'
 import extract from './extract.js'
-import request from './request.js'
+import request, { createRequest } from './request.js'
 
 export default {
   contentType,
   parse,
   extract,
-  request
+  request,
+  createRequest
 }

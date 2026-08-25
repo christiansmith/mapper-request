@@ -41,13 +41,32 @@ async function getSearchParams(options, descriptor, context) {
 
 /**
  * getUrl
+ *
+ * `url` locates the whole request URL. A pointer string reads from the
+ * output being built (chained requests); `{ source: <pointer> }` reads from
+ * the source value instead, for URLs that arrive as data. Either way the
+ * resolved value is used verbatim. Destination policy belongs to checkUrl.
  */
 async function getUrl(options, descriptor, context) {
-  const { output } = context
+  const locator = descriptor.url
   let url
 
-  if (descriptor.url) {
-    url = JSONPointer.get(output, descriptor.url)
+  if (locator) {
+    if (typeof locator === 'string') {
+      url = JSONPointer.get(context.output, locator)
+    } else {
+      const scopes = ['source', 'target', 'input', 'output']
+      const named = scopes.filter((scope) => typeof locator[scope] === 'string')
+
+      if (named.length !== 1) {
+        throw new Error('Invalid url: exactly one of source, target, input, or output')
+      }
+
+      const [scope] = named
+      const root = scope === 'source' ? options : context[scope]
+
+      url = JSONPointer.get(root, locator[scope])
+    }
   } else {
     const origin = descriptor.origin
     const pathname = getPathname(options, descriptor)

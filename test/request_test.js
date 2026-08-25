@@ -152,6 +152,77 @@ Deno.test('golden: url read from output by pointer', async () => {
   assertEquals(calls[0].url, 'https://api.example.test/next')
 })
 
+Deno.test('golden: url read from source by pointer', async () => {
+  const { calls } = await captureRequest(
+    request,
+    { url: { source: '/URL' } },
+    { URL: 'https://articles.example.test/vol-137/article.html?seq=2' },
+    context()
+  )
+
+  assertEquals(calls[0].url, 'https://articles.example.test/vol-137/article.html?seq=2')
+})
+
+Deno.test('golden: url read from whole source by empty pointer', async () => {
+  const { calls } = await captureRequest(
+    request,
+    { url: { source: '' } },
+    'https://articles.example.test/article.html',
+    context()
+  )
+
+  assertEquals(calls[0].url, 'https://articles.example.test/article.html')
+})
+
+Deno.test('golden: url read from output by scoped pointer', async () => {
+  const { calls } = await captureRequest(
+    request,
+    { url: { output: '/link' } },
+    {},
+    context({}, { output: { link: 'https://api.example.test/next' } })
+  )
+
+  assertEquals(calls[0].url, 'https://api.example.test/next')
+})
+
+Deno.test('golden: url read from target by pointer', async () => {
+  const { calls } = await captureRequest(
+    request,
+    { url: { target: '/URL' } },
+    {},
+    context({}, { target: { URL: 'https://api.example.test/from-target' } })
+  )
+
+  assertEquals(calls[0].url, 'https://api.example.test/from-target')
+})
+
+Deno.test('golden: url read from input by pointer', async () => {
+  const { calls } = await captureRequest(
+    request,
+    { url: { input: '/URL' } },
+    {},
+    context({ URL: 'https://api.example.test/from-input' })
+  )
+
+  assertEquals(calls[0].url, 'https://api.example.test/from-input')
+})
+
+Deno.test('a url object naming two scopes is refused', async () => {
+  await assertRejects(
+    () => captureRequest(request, { url: { source: '/a', output: '/b' } }, { a: 'x' }, context()),
+    Error,
+    'exactly one'
+  )
+})
+
+Deno.test('a url object naming neither scope is refused', async () => {
+  await assertRejects(
+    () => captureRequest(request, { url: { pointer: '/a' } }, { a: 'x' }, context()),
+    Error,
+    'Invalid url'
+  )
+})
+
 /**
  * 2. Hardened behavior
  */
@@ -335,6 +406,24 @@ Deno.test('checkUrl rejects before any request is made', async () => {
   } finally {
     await server.shutdown()
   }
+})
+
+Deno.test('checkUrl vets source-resolved urls before any request is made', async () => {
+  assertSurface()
+
+  const plugin = createRequest({
+    checkUrl: (url) => {
+      if (!url.startsWith('https://allowed.example.test/')) {
+        throw new Error(`destination not allowed: ${url}`)
+      }
+    }
+  })
+
+  await assertRejects(
+    () => plugin({ url: { source: '/URL' } }, { URL: 'http://192.0.2.1/internal' }, context()),
+    Error,
+    'destination not allowed'
+  )
 })
 
 Deno.test('maxResponseBytes rejects an oversized body', async () => {

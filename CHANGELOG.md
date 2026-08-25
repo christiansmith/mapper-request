@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0 (2026-08-24)
+
+### Added
+
+- `url` accepts a scoped object form naming exactly one of four scopes. `{ source: <JSON Pointer> }` resolves the request URL from the value being mapped, so a mapping can fetch a URL that arrives as data. `{ target: … }`, `{ input: … }`, and `{ output: … }` read from the object being built, the original input, and the output so far; a bare pointer string still reads from the output, unchanged. The resolved URL is used verbatim — deployments exposed to untrusted callers should hold a boundary at `checkUrl` or in network egress rules, typically refusing private address ranges.
+
 ## 0.2.0 (2026-08-24)
 
 ### Added

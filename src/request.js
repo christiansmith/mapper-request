@@ -3,6 +3,7 @@
  */
 import { map } from '@christiansmith/mapper-js/src/Mapper.js'
 import JSONPointer from './JSONPointer.js'
+import RedirectRefusedError from './RedirectRefusedError.js'
 import parse from './parse.js'
 
 /**
@@ -98,24 +99,47 @@ function filterHeaders(headers, allowHeaders) {
 }
 
 /**
+ * redirectStatusCodes
+ */
+const REDIRECT_STATUS = [301, 302, 303, 307, 308]
+
+/**
+ * allowedTarget
+ *
+ * Followed redirects stay on the same origin, with one carveout: the
+ * http->https upgrade of the identical hostname on default ports. The URL
+ * API normalizes a scheme's default port to '', so an empty port on both
+ * sides means both URLs sit on their defaults. The downgrade direction is
+ * cross-origin and never followed.
+ */
+function allowedTarget(target, current, redirectHttpsUpgrade) {
+  if (target.origin === current.origin) {
+    return true
+  }
+
+  return (
+    redirectHttpsUpgrade &&
+    current.protocol === 'http:' &&
+    target.protocol === 'https:' &&
+    target.hostname === current.hostname &&
+    current.port === '' &&
+    target.port === ''
+  )
+}
+
+/**
  * refuseRedirect
  *
- * The upstream chooses the redirect target, so following would defeat any
- * destination policy. Refuse and name the target instead.
+ * The upstream chooses the redirect target, so following it is a policy
+ * decision. Refuse with a typed error naming the target; the caller decides
+ * when a redirect may be followed instead.
  */
 function refuseRedirect(response, url) {
   const { status, headers, body } = response
 
-  if ([301, 302, 303, 307, 308].includes(status)) {
-    const location = headers.get('location')
-    const detail = location ? ` to ${location}` : ''
+  body?.cancel()
 
-    body?.cancel()
-
-    throw new Error(
-      `Redirect refused: ${url} responded ${status}${detail}`
-    )
-  }
+  throw new RedirectRefusedError(url, status, headers.get('location'))
 }
 
 /**
@@ -173,13 +197,20 @@ export function createRequest(config = {}) {
   const {
     timeoutMs = 10000,
     redirect = 'refuse',
+    maxRedirects = 2,
+    redirectSameOrigin = true,
+    redirectHttpsUpgrade = true,
     allowHeaders = true,
     checkUrl,
     maxResponseBytes
   } = config
 
-  if (redirect !== 'refuse') {
-    throw new Error(`Unsupported redirect mode ${redirect}: only "refuse" is implemented`)
+  if (redirect !== 'refuse' && redirect !== 'follow') {
+    throw new Error(`Unsupported redirect mode ${redirect}: only "refuse" and "follow" are implemented`)
+  }
+
+  if (redirect === 'follow' && redirectSameOrigin !== true) {
+    throw new Error('redirectSameOrigin: false is not implemented')
   }
 
   return async function request(descriptor, options, context) {
@@ -190,7 +221,7 @@ export function createRequest(config = {}) {
       throttle && (await throttle(options, context))
 
       // form the request options
-      const url = await getUrl(options, descriptor, context)
+      let url = await getUrl(options, descriptor, context)
 
       checkUrl && (await checkUrl(url))
 
@@ -206,16 +237,36 @@ export function createRequest(config = {}) {
       }, timeoutMs)
 
       try {
-        // fetch the response
-        let response = await fetch(url, {
-          method,
-          headers,
-          body,
-          redirect: 'manual',
-          signal: controller.signal
+        const attempt = () => fetch(url, {
+            method,
+            headers,
+            body,
+            redirect: 'manual',
+            signal: controller.signal
         })
 
-        refuseRedirect(response, url)
+        let response = await attempt()
+
+        for (let hops = 0; REDIRECT_STATUS.includes(response.status) ; hops++) {
+          const location = response.headers.get('location')
+          const target = location && URL.parse(location, url)
+
+          if (
+            redirect !== 'follow' ||
+            method !== 'GET' ||
+            hops >= maxRedirects ||
+            !target ||
+            !allowedTarget(target, new URL(url), redirectHttpsUpgrade)
+          ) {
+            refuseRedirect(response, url)
+          }
+
+          response.body?.cancel()
+          url = target.href
+          checkUrl && (await checkUrl(url))
+
+          response = await attempt()
+        }
 
         if (maxResponseBytes) {
           response = await capResponse(response, maxResponseBytes)

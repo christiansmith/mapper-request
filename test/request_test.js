@@ -15,7 +15,7 @@
  *    the checkUrl policy hook, and pathname encoding. These fail until that
  *    surface is implemented.
  */
-import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@^1'
+import { assert, assertEquals, assertRejects, assertThrows } from 'jsr:@std/assert@^1'
 import request, * as requestModule from '../src/request.js'
 
 const { createRequest } = requestModule
@@ -451,4 +451,362 @@ Deno.test('pathname template values are URL-encoded', async () => {
   )
 
   assertEquals(calls[0].url, 'https://api.example.test/things/a%2F..%2Fb%20c')
+})
+
+/**
+ * 3. Redirect policy
+ *
+ * Specifies the opt-in bounded follow surface: redirect: 'follow' with
+ * maxRedirects and redirectSameOrigin, refusal remaining the default, and
+ * every hop re-passing checkUrl. These fail until that surface is
+ * implemented.
+ */
+
+Deno.test('follow: a same-origin 301 to the trailing-slash form is followed', async () => {
+  assertSurface()
+
+  const hits = []
+  const { server, origin } = serve((req) => {
+    const { pathname } = new URL(req.url)
+    hits.push(pathname)
+
+    if (pathname === '/article') {
+      return new Response(null, { status: 301, headers: { location: `${origin}/article/` } })
+    }
+
+    return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow' })
+    const result = await plugin({ origin, pathname: '/article' }, {}, context())
+    assertEquals(hits, ['/article', '/article/'])
+    assertEquals(result.json, { ok: true })
+  } finally {
+    await server.shutdown()
+  }
+})
+
+Deno.test('follow: every hop re-passes checkUrl before it is fetched', async () => {
+  assertSurface()
+
+  const hits = []
+  const checked = []
+  const { server, origin } = serve((req) => {
+    hits.push(new URL(req.url).pathname)
+    return new Response(null, { status: 301, headers: { location: `${origin}/secret` } })
+  })
+
+  try {
+    const plugin = createRequest({
+      redirect: 'follow',
+      checkUrl: (url) => {
+        checked.push(url)
+        if (url.endsWith('/secret')) {
+          throw new Error('destination not allowed')
+        }
+      }
+    })
+    await assertRejects(
+      () => plugin({ origin, pathname: '/public' }, {}, context()),
+      Error,
+      'destination not allowed'
+    )
+    assertEquals(hits, ['/public'])
+    assertEquals(checked, [`${origin}/public`, `${origin}/secret`])
+  } finally {
+    await server.shutdown()
+  }
+})
+
+Deno.test('follow: refuses beyond maxRedirects', async () => {
+  assertSurface()
+
+  const hits = []
+  const { server, origin } = serve((req) => {
+    const { pathname } = new URL(req.url)
+    hits.push(pathname)
+    const next = Number(pathname.slice(1)) + 1
+    return new Response(null, { status: 301, headers: { location: `${origin}/${next}` } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow', maxRedirects: 2 })
+    const error = await assertRejects(
+      () => plugin({ origin, pathname: '/1' }, {}, context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(hits, ['/1', '/2', '/3'])
+    assertEquals(error.location, `${origin}/4`)
+  } finally {
+    await server.shutdown()
+  }
+})
+
+Deno.test('follow: refuses a cross-origin target', async () => {
+  assertSurface()
+
+  const outside = []
+  const { server: other, origin: otherOrigin } = serve((req) => {
+    outside.push(new URL(req.url).pathname)
+    return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } })
+  })
+  const { server, origin } = serve(() => {
+    return new Response(null, { status: 301, headers: { location: `${otherOrigin}/elsewhere` } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow' })
+    await assertRejects(
+      () => plugin({ origin, pathname: '/a' }, {}, context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(outside, [])
+  } finally {
+    await server.shutdown()
+    await other.shutdown()
+  }
+})
+
+Deno.test('follow: refuses a redirected non-GET request', async () => {
+  assertSurface()
+
+  const hits = []
+  const { server, origin } = serve((req) => {
+    hits.push(`${req.method} ${new URL(req.url).pathname}`)
+    return new Response(null, { status: 301, headers: { location: `${origin}/items/` } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow' })
+    await assertRejects(
+      () => plugin({ origin, pathname: '/items', method: 'POST' }, {}, context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(hits, ['POST /items'])
+  } finally {
+    await server.shutdown()
+  }
+})
+
+Deno.test('follow: resolves a relative Location against the current url', async () => {
+  assertSurface()
+
+  const hits = []
+  const { server, origin } = serve((req) => {
+    const { pathname } = new URL(req.url)
+    hits.push(pathname)
+
+    if (pathname === '/article') {
+      return new Response(null, { status: 301, headers: { location: '/article/' } })
+    }
+
+    return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow' })
+    await plugin({ origin, pathname: '/article' }, {}, context())
+    assertEquals(hits, ['/article', '/article/'])
+  } finally {
+    await server.shutdown()
+  }
+})
+
+Deno.test('follow: refuses a redirect without a Location', async () => {
+  assertSurface()
+
+  const { server, origin } = serve(() => new Response(null, { status: 301 }))
+
+  try {
+    const plugin = createRequest({ redirect: 'follow' })
+    await assertRejects(
+      () => plugin({ origin, pathname: '/a' }, {}, context()),
+      Error,
+      'Redirect refused'
+    )
+  } finally {
+    await server.shutdown()
+  }
+})
+
+Deno.test('follow: the timeout spans the whole redirect chain', async () => {
+  assertSurface()
+
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  const { server, origin } = serve(async (req) => {
+    const { pathname } = new URL(req.url)
+
+    if (pathname === '/a') {
+      return new Response(null, { status: 301, headers: { location: `${origin}/b` } })
+    }
+
+    await gate
+    return new Response('{"late":true}', { headers: { 'content-type': 'application/json' } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow', timeoutMs: 250 })
+    const started = Date.now()
+    await assertRejects(() => plugin({ origin, pathname: '/a' }, {}, context()))
+    assert(Date.now() - started < 2000, 'chain did not abort promptly')
+  } finally {
+    release()
+    await server.shutdown()
+  }
+})
+
+Deno.test('maxRedirects alone does not enable following', async () => {
+  assertSurface()
+
+  const hits = []
+  const { server, origin } = serve((req) => {
+    hits.push(new URL(req.url).pathname)
+    return new Response(null, { status: 301, headers: { location: `${origin}/a/` } })
+  })
+
+  try {
+    const plugin = createRequest({ maxRedirects: 5 })
+    await assertRejects(
+      () => plugin({ origin, pathname: '/a' }, {}, context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(hits, ['/a'])
+  } finally {
+    await server.shutdown()
+  }
+})
+
+Deno.test('a refused redirect carries a typed error', async () => {
+  assertSurface()
+
+  const { server, origin } = serve(() => {
+    return new Response(null, { status: 301, headers: { location: `${origin}/a/` } })
+  })
+
+  try {
+    const plugin = createRequest()
+    const error = await assertRejects(
+      () => plugin({ origin, pathname: '/a' }, {}, context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(error.code, 'E_REDIRECT_REFUSED')
+    assertEquals(error.status, 301)
+    assertEquals(error.location, `${origin}/a/`)
+  } finally {
+    await server.shutdown()
+  }
+})
+
+Deno.test('an unsupported redirect mode is refused at construction', () => {
+  assertSurface()
+
+  assertThrows(() => createRequest({ redirect: 'always' }), Error, 'Unsupported redirect mode')
+})
+
+/**
+ * The https-upgrade cases stub fetch rather than use serve(): the local test
+ * server cannot answer over TLS.
+ */
+
+function captureRedirect(handler) {
+  const original = globalThis.fetch
+  const calls = []
+
+  globalThis.fetch = (url) => {
+    calls.push(String(url))
+    return Promise.resolve(handler(String(url)))
+  }
+
+  return { calls, restore: () => (globalThis.fetch = original) }
+}
+
+Deno.test('follow: an http→https upgrade of the same host is followed by default', async () => {
+  assertSurface()
+
+  const { calls, restore } = captureRedirect((url) => {
+    if (url.startsWith('http://')) {
+      return new Response(null, { status: 301, headers: { location: 'https://articles.example.test/a/' } })
+    }
+    return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow' })
+    await plugin({ url: { source: '' } }, 'http://articles.example.test/a', context())
+    assertEquals(calls, [
+      'http://articles.example.test/a',
+      'https://articles.example.test/a/'
+    ])
+  } finally {
+    restore()
+  }
+})
+
+Deno.test('follow: redirectHttpsUpgrade false requires strict same-origin', async () => {
+  assertSurface()
+
+  const { calls, restore } = captureRedirect(() => {
+    return new Response(null, { status: 301, headers: { location: 'https://articles.example.test/a/' } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow', redirectHttpsUpgrade: false })
+    await assertRejects(
+      () => plugin({ url: { source: '' } }, 'http://articles.example.test/a', context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(calls, ['http://articles.example.test/a'])
+  } finally {
+    restore()
+  }
+})
+
+Deno.test('follow: an upgrade off the default ports is refused', async () => {
+  assertSurface()
+
+  const { calls, restore } = captureRedirect(() => {
+    return new Response(null, { status: 301, headers: { location: 'https://articles.example.test:8080/a/' } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow' })
+    await assertRejects(
+      () => plugin({ url: { source: '' } }, 'http://articles.example.test:8080/a', context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(calls, ['http://articles.example.test:8080/a'])
+  } finally {
+    restore()
+  }
+})
+
+Deno.test('follow: never follows an https→http downgrade', async () => {
+  assertSurface()
+
+  const { calls, restore } = captureRedirect(() => {
+    return new Response(null, { status: 301, headers: { location: 'http://articles.example.test/a/' } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow' })
+    await assertRejects(
+      () => plugin({ url: { source: '' } }, 'https://articles.example.test/a', context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(calls, ['https://articles.example.test/a'])
+  } finally {
+    restore()
+  }
 })

@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.3.0 (2026-08-24)
+## 0.4.0 (unreleased)
+
+### Added
+
+- `redirect: 'follow'` enables bounded redirect following as an opt-in deployment policy; refusal remains the default. Following is limited to GET requests and at most `maxRedirects` hops (default 2), every redirect target re-passes `checkUrl` before it is fetched so destination policy holds across a chain, and one timeout spans the whole chain. This makes hosts that 301-canonicalize their URLs (most commonly to a trailing-slash form) resolvable without conceding the refusal default.
+- `redirectSameOrigin` (default `true`) names the constraint that followed redirects stay on the same origin. Only `true` is implemented; cross-origin targets are refused.
+- `redirectHttpsUpgrade` (default `true`) additionally allows following an http→https redirect to the identical hostname on default ports — the scheme-upgrade redirect endemic on the open web. Set it `false` to require strict same-origin. The downgrade direction (https→http) is never followed under any configuration.
+
+### Changed
+
+- A refused redirect now throws a typed error carrying `code: 'E_REDIRECT_REFUSED'`, the response `status`, and the `location` target when present, so consuming services can classify a refusal as a policy outcome rather than an internal fault. The error message is unchanged.
 
 ### Added
 

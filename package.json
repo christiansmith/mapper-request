@@ -1,6 +1,6 @@
 {
   "name": "@christiansmith/mapper-request",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "description": "Fetching and scraping for Mapper JS",
   "main": "src/index.js",

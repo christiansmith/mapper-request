@@ -12,6 +12,15 @@
 
 - A refused redirect now throws a typed error carrying `code: 'E_REDIRECT_REFUSED'`, the response `status`, and the `location` target when present, so consuming services can classify a refusal as a policy outcome rather than an internal fault. The error message is unchanged.
 
+### Notes
+
+- Following redirects requires the static `URL.parse` (Deno ≥ 1.43, Node ≥ 22.1). On older runtimes any 3xx throws a `TypeError` instead of the typed refusal — fail-closed, but a different error.
+- The `throttle`, `decache`, and `encache` hooks run once per plugin invocation; a followed chain issues up to `maxRedirects + 1` wire requests under that single invocation. A deployment using `throttle` as an upstream rate limiter should account for the chain length.
+- The timeout spans the network time of the whole chain. Time spent inside a per-hop `checkUrl` hook is not under the abort signal, so total wall time can exceed `timeoutMs` by the hook's duration.
+- On timeout, the error message names the hop in flight when the timer fired, which under `redirect: 'follow'` may be a redirect target rather than the URL originally submitted.
+
+## 0.3.0 (2026-08-24)
+
 ### Added
 
 - `url` accepts a scoped object form naming exactly one of four scopes. `{ source: <JSON Pointer> }` resolves the request URL from the value being mapped, so a mapping can fetch a URL that arrives as data. `{ target: … }`, `{ input: … }`, and `{ output: … }` read from the object being built, the original input, and the output so far; a bare pointer string still reads from the output, unchanged. The resolved URL is used verbatim — deployments exposed to untrusted callers should hold a boundary at `checkUrl` or in network egress rules, typically refusing private address ranges.

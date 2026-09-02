@@ -106,13 +106,25 @@ const REDIRECT_STATUS = [301, 302, 303, 307, 308]
 /**
  * allowedTarget
  *
- * Followed redirects stay on the same origin, with one carveout: the
- * http->https upgrade of the identical hostname on default ports. The URL
- * API normalizes a scheme's default port to '', so an empty port on both
- * sides means both URLs sit on their defaults. The downgrade direction is
- * cross-origin and never followed.
+ * Followed redirects are pinned to credential-free http(s) URLs and stay on
+ * the same origin, with one carveout: the http->https upgrade of the
+ * identical hostname on default ports. The URL API normalizes a scheme's
+ * default port to '', so an empty port on both sides means both URLs sit on
+ * their defaults. Opaque origins all compare as the string "null", so the
+ * scheme pin must come before the origin comparison. The downgrade
+ * direction is cross-origin and never followed.
  */
 function allowedTarget(target, current, redirectHttpsUpgrade) {
+  const webSchemes = ['http:', 'https:']
+
+  if (!webSchemes.includes(current.protocol) || !webSchemes.includes(target.protocol)) {
+    return false
+  }
+
+  if (target.username || target.password) {
+    return false
+  }
+
   if (target.origin === current.origin) {
     return true
   }
@@ -203,7 +215,7 @@ export function createRequest(config = {}) {
     allowHeaders = true,
     checkUrl,
     maxResponseBytes
-  } = config
+  } = { __proto__: null, ...config }
 
   if (redirect !== 'refuse' && redirect !== 'follow') {
     throw new Error(`Unsupported redirect mode ${redirect}: only "refuse" and "follow" are implemented`)
@@ -211,6 +223,14 @@ export function createRequest(config = {}) {
 
   if (redirect === 'follow' && redirectSameOrigin !== true) {
     throw new Error('redirectSameOrigin: false is not implemented')
+  }
+
+  if (redirect === 'follow' && (!Number.isInteger(maxRedirects) || maxRedirects < 0 || maxRedirects > 20)) {
+    throw new Error(`Invalid maxRedirects ${maxRedirects}: an integer from 0 to 20 is required`)
+  }
+
+  if (redirect === 'follow' && typeof redirectHttpsUpgrade !== 'boolean') {
+    throw new Error(`Invalid redirectHttpsUpgrade ${redirectHttpsUpgrade}: a boolean is required`)
   }
 
   return async function request(descriptor, options, context) {

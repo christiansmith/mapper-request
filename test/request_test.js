@@ -810,3 +810,99 @@ Deno.test('follow: never follows an https→http downgrade', async () => {
     restore()
   }
 })
+
+/**
+ * 4. Redirect policy hardening
+ *
+ * Regression tests from the 0.4.0 security review: construction-time
+ * validation of the follow bounds, own-property config reads, and
+ * allowedTarget pinned to credential-free http(s) targets. These fail until
+ * the review's remediations are applied.
+ */
+
+Deno.test('follow: maxRedirects must be a non-negative integer', () => {
+  assertSurface()
+
+  for (const value of [NaN, Infinity, '3', -1, {}]) {
+    assertThrows(() => createRequest({ redirect: 'follow', maxRedirects: value }), Error)
+  }
+})
+
+Deno.test('follow: redirectHttpsUpgrade must be a boolean', () => {
+  assertSurface()
+
+  assertThrows(() => createRequest({ redirect: 'follow', redirectHttpsUpgrade: 'false' }), Error)
+})
+
+Deno.test('a polluted prototype cannot enable following', async () => {
+  assertSurface()
+
+  const { calls, restore } = captureRedirect(() => {
+    return new Response(null, { status: 301, headers: { location: 'http://articles.example.test/a/' } })
+  })
+
+  Object.prototype.redirect = 'follow'
+  Object.prototype.maxRedirects = 50
+
+  try {
+    const plugin = createRequest()
+    await assertRejects(
+      () => plugin({ url: { source: '' } }, 'http://articles.example.test/a', context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(calls, ['http://articles.example.test/a'])
+  } finally {
+    delete Object.prototype.redirect
+    delete Object.prototype.maxRedirects
+    restore()
+  }
+})
+
+Deno.test('follow: refuses a blob: target that inherits the origin', async () => {
+  assertSurface()
+
+  const { calls, restore } = captureRedirect(() => {
+    return new Response(null, { status: 301, headers: { location: 'blob:http://articles.example.test/uuid' } })
+  })
+
+  try {
+    const plugin = createRequest({ redirect: 'follow' })
+    await assertRejects(
+      () => plugin({ url: { source: '' } }, 'http://articles.example.test/a', context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(calls, ['http://articles.example.test/a'])
+  } finally {
+    restore()
+  }
+})
+
+Deno.test('follow: refuses a same-origin target carrying credentials', async () => {
+  assertSurface()
+
+  const hits = []
+  const checked = []
+  const { server, origin } = serve((req) => {
+    hits.push(new URL(req.url).pathname)
+    const { host } = new URL(origin)
+    return new Response(null, { status: 301, headers: { location: `http://user:pass@${host}/b` } })
+  })
+
+  try {
+    const plugin = createRequest({
+      redirect: 'follow',
+      checkUrl: (url) => checked.push(url)
+    })
+    await assertRejects(
+      () => plugin({ origin, pathname: '/a' }, {}, context()),
+      Error,
+      'Redirect refused'
+    )
+    assertEquals(hits, ['/a'])
+    assertEquals(checked, [`${origin}/a`])
+  } finally {
+    await server.shutdown()
+  }
+})
